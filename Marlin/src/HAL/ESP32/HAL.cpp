@@ -22,10 +22,16 @@
 #ifdef ARDUINO_ARCH_ESP32
 
 #include "../../inc/MarlinConfig.h"
+#include "./Hal.h"
 
 #include <rom/rtc.h>
-#include <driver/adc.h>
-#include <esp_adc_cal.h>
+#include <esp_adc/adc_continuous.h> // Change: For 5.1.4
+//#include <driver/adc.h>           // Change: For 5.1.4
+//#include <esp_adc_cal.h>          // Change: For 5.1.4
+#include <esp_adc/adc_cali.h>      // Change: For 5.1.4
+#include <esp_adc/adc_cali_scheme.h> // Change: For 5.1.4
+
+
 #include <HardwareSerial.h>
 
 #if ENABLED(USE_ESP32_TASK_WDT)
@@ -47,6 +53,14 @@
 #if ENABLED(ESP3D_WIFISUPPORT)
   DefaultSerial1 MSerial0(false, Serial2Socket);
 #endif
+
+#ifdef SERIAL_PORT_3
+  #if SERIAL_PORT_3 == 1
+    DefaultSerial3 MSerial2(false, Serial1);
+  #elif SERIAL_PORT_3 == 2
+    DefaultSerial3 MSerial2(false, Serial2);
+  #endif
+#endif // SERIAL_PORT_3
 
 // ------------------------
 // Externs
@@ -71,9 +85,9 @@ pwm_pin_t MarlinHAL::pwm_pin_data[MAX_EXPANDER_BITS];
 // Private Variables
 // ------------------------
 
-esp_adc_cal_characteristics_t characteristics[ADC_ATTEN_MAX];
+esp_adc_cal_characteristics_t characteristics[ADC_ATTENDB_MAX];
 adc_atten_t attenuations[ADC1_CHANNEL_MAX] = {};
-uint32_t thresholds[ADC_ATTEN_MAX];
+uint32_t thresholds[ADC_ATTENDB_MAX];
 
 volatile int numPWMUsed = 0;
 volatile struct { pin_t pin; int value; } pwmState[MAX_PWM_PINS];
@@ -100,6 +114,16 @@ struct {
     #endif
   }
 
+#endif
+
+#if ENABLED(SDSUPPORT) && ENABLED(CUSTOM_SD_ACCESS)
+bool isSdUsed()
+{
+#if ENABLED(ESP3D_WIFISUPPORT)
+    return esp3dlib.isSdUsed();
+#endif
+    return false;
+}
 #endif
 
 #if ENABLED(USE_ESP32_EXIO)
@@ -138,7 +162,6 @@ void MarlinHAL::init_board() {
   // The following code initializes hardware Serial1 and Serial2 to use user-defined pins
   // if they have been defined.
   #if defined(HARDWARE_SERIAL1_RX) && defined(HARDWARE_SERIAL1_TX)
-    HardwareSerial Serial1(1);
     #ifdef TMC_BAUD_RATE  // use TMC_BAUD_RATE for Serial1 if defined
       Serial1.begin(TMC_BAUD_RATE, SERIAL_8N1, HARDWARE_SERIAL1_RX, HARDWARE_SERIAL1_TX);
     #else  // use default BAUDRATE if TMC_BAUD_RATE not defined
@@ -209,18 +232,25 @@ int MarlinHAL::freeMemory() { return ESP.getFreeHeap(); }
 // ADC
 // ------------------------
 
-#define ADC1_CHANNEL(pin) ADC1_GPIO ## pin ## _CHANNEL
-
-adc1_channel_t get_channel(int pin) {
-  switch (pin) {
-    case 39: return ADC1_CHANNEL(39);
-    case 36: return ADC1_CHANNEL(36);
-    case 35: return ADC1_CHANNEL(35);
-    case 34: return ADC1_CHANNEL(34);
-    case 33: return ADC1_CHANNEL(33);
-    case 32: return ADC1_CHANNEL(32);
-  }
-  return ADC1_CHANNEL_MAX;
+//Reference:
+//tools/sdk/esp32/include/driver/include/driver/adc.h
+adc1_channel_t get_channel(int pin)
+{
+    switch (pin) {
+    case 39:
+        return ADC1_CHANNEL_3;
+    case 36:
+        return ADC1_CHANNEL_0;
+    case 35:
+        return ADC1_CHANNEL_7;
+    case 34:
+        return ADC1_CHANNEL_6;
+    case 33:
+        return ADC1_CHANNEL_5;
+    case 32:
+        return ADC1_CHANNEL_4;
+    }
+    return ADC1_CHANNEL_MAX;
 }
 
 void adc1_set_attenuation(adc1_channel_t chan, adc_atten_t atten) {
@@ -232,7 +262,7 @@ void adc1_set_attenuation(adc1_channel_t chan, adc_atten_t atten) {
 
 void MarlinHAL::adc_init() {
   // Configure ADC
-  adc1_config_width(ADC_WIDTH_12Bit);
+  adc1_config_width(ADC_WIDTH_BIT_12);
 
   // Configure channels only if used as (re-)configuring a pin for ADC that is used elsewhere might have adverse effects
   TERN_(HAS_TEMP_ADC_0,        adc1_set_attenuation(get_channel(TEMP_0_PIN), ADC_ATTEN_11db));
@@ -254,7 +284,7 @@ void MarlinHAL::adc_init() {
   // That's why we're not setting it up here.
 
   // Calculate ADC characteristics (i.e., gain and offset factors for each attenuation level)
-  for (int i = 0; i < ADC_ATTEN_MAX; i++) {
+  for (int i = 0; i < ADC_ATTENDB_MAX; i++) {
     esp_adc_cal_characterize(ADC_UNIT_1, (adc_atten_t)i, ADC_WIDTH_BIT_12, V_REF, &characteristics[i]);
 
     // Change attenuation 100mV below the calibrated threshold

@@ -28,7 +28,7 @@
 #include "i2s.h"
 
 #include "../shared/Marduino.h"
-#include <driver/periph_ctrl.h>
+//#include <driver/periph_ctrl.h> // Change: For 5.1.4
 #include <rom/lldesc.h>
 #include <soc/i2s_struct.h>
 #include <freertos/queue.h>

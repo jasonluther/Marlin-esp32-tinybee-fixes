@@ -24,8 +24,9 @@
 #include <stdio.h>
 #include <esp_types.h>
 #include <soc/timer_group_struct.h>
-#include <driver/periph_ctrl.h>
-#include <driver/timer.h>
+//Change: For 5.1.4 #include <driver/periph_ctrl.h>
+//#include <driver/timer.h> // Change: For 5.1.4
+#include <driver/gptimer.h> // Change: For 5.1.4
 
 #include "../../inc/MarlinConfig.h"
 
@@ -41,17 +42,18 @@
 
 static timg_dev_t *TG[2] = {&TIMERG0, &TIMERG1};
 
-const tTimerConfig timer_config[NUM_HARDWARE_TIMERS] = {
-  { TIMER_GROUP_0, TIMER_0, STEPPER_TIMER_PRESCALE, stepTC_Handler }, // 0 - Stepper
-  { TIMER_GROUP_0, TIMER_1,    TEMP_TIMER_PRESCALE, tempTC_Handler }, // 1 - Temperature
-  { TIMER_GROUP_1, TIMER_0,     PWM_TIMER_PRESCALE, pwmTC_Handler  }, // 2 - PWM
-  { TIMER_GROUP_1, TIMER_1,    TONE_TIMER_PRESCALE, toneTC_Handler }, // 3 - Tone
+const tTimerConfig timer_config[NUM_HARDWARE_TIMERS] = { //Change: For 5.1.4
+  { 0, STEPPER_TIMER_PRESCALE, stepTC_Handler, NULL, false }, // 0 - Stepper
+  { 1, TEMP_TIMER_PRESCALE, tempTC_Handler, NULL, false },    // 1 - Temperature
+  { 2, PWM_TIMER_PRESCALE, pwmTC_Handler, NULL, false },      // 2 - PWM
+  { 3, TONE_TIMER_PRESCALE, toneTC_Handler, NULL, false },    // 3 - Tone
 };
 
 // ------------------------
 // Public functions
 // ------------------------
-
+// Change: For 5.1.4
+/*
 void IRAM_ATTR timer_isr(void *para) {
   const tTimerConfig& timer = timer_config[(int)para];
 
@@ -75,6 +77,17 @@ void IRAM_ATTR timer_isr(void *para) {
   // Enable it again so it gets triggered the next time
   TG[timer.group]->hw_timer[timer.idx].config.alarm_en = TIMER_ALARM_EN;
 }
+*/
+
+bool IRAM_ATTR timer_on_alarm_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data) {
+  uint8_t timer_num = (uint8_t)(uint32_t)user_data;
+  const tTimerConfig& timer_config_entry = timer_config[timer_num];
+  // Call the timer callback
+  timer_config_entry.fn();
+  
+  return false; // return false to re-enable the alarm
+}
+
 
 /**
  * Enable and initialize the timer
@@ -82,7 +95,8 @@ void IRAM_ATTR timer_isr(void *para) {
  * @param frequency frequency of the timer
  */
 void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
-  const tTimerConfig timer = timer_config[timer_num];
+  // Change: For 5.1.4
+  /*const tTimerConfig timer = timer_config[timer_num];
 
   timer_config_t config;
   config.divider     = timer.divider;
@@ -90,7 +104,7 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
   config.counter_en  = TIMER_PAUSE;
   config.alarm_en    = TIMER_ALARM_EN;
   config.intr_type   = TIMER_INTR_LEVEL;
-  config.auto_reload = true;
+  config.auto_reload = TIMER_AUTORELOAD_EN; //Change: For 5.1.4
 
   // Select and initialize the timer
   timer_init(timer.group, timer.idx, &config);
@@ -106,6 +120,37 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
   timer_isr_register(timer.group, timer.idx, timer_isr, (void*)(uint32_t)timer_num, 0, nullptr);
 
   timer_start(timer.group, timer.idx);
+  */
+ const tTimerConfig& timer = timer_config[timer_num];
+  
+  // Timer configuration
+  gptimer_config_t config = {
+    .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+    .direction = GPTIMER_COUNT_UP,
+    .resolution_hz = HAL_TIMER_RATE / timer.divider,
+  };
+  
+  // Timer initialisation
+  ESP_ERROR_CHECK(gptimer_new_timer(&config, &timer_config[timer_num].timer));
+  
+  // Alarm configuration
+  uint64_t alarm_value = (HAL_TIMER_RATE) / timer.divider / frequency - 1;
+  gptimer_alarm_config_t alarm_config = {
+    .alarm_count = alarm_value,
+    .reload_count = 0,
+    .flags.auto_reload_on_alarm = true,
+  };
+  ESP_ERROR_CHECK(gptimer_set_alarm_action(timer_config[timer_num].timer, &alarm_config));
+  
+  // Callback registration
+  gptimer_event_callbacks_t callbacks = {
+    .on_alarm = timer_on_alarm_callback,
+  };
+  ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, (void*)timer_num));
+  
+  // Start the timer
+  ESP_ERROR_CHECK(gptimer_enable(timer_config[timer_num].timer));
+  ESP_ERROR_CHECK(gptimer_start(timer_config[timer_num].timer));
 }
 
 /**
@@ -114,9 +159,21 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
  * @param timer_num timer number to set the compare value to
  * @param compare   threshold at which the interrupt is triggered
  */
-void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
+// Change: For 5.1.4
+/*
+ void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
   const tTimerConfig timer = timer_config[timer_num];
   timer_set_alarm_value(timer.group, timer.idx, compare);
+}
+*/
+void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
+  const tTimerConfig& timer = timer_config[timer_num];
+  gptimer_alarm_config_t alarm_config = {
+    .alarm_count = compare,
+    .reload_count = 0,
+    .flags.auto_reload_on_alarm = true,
+  };
+  ESP_ERROR_CHECK(gptimer_set_alarm_action(timer.timer, &alarm_config));
 }
 
 /**
@@ -124,12 +181,21 @@ void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
  * @param  timer_num timer number to get the count from
  * @return           the timer current threshold for the alarm to be triggered
  */
+// Change: For 5.1.4
+/*
 hal_timer_t HAL_timer_get_compare(const uint8_t timer_num) {
   const tTimerConfig timer = timer_config[timer_num];
 
   uint64_t alarm_value;
   timer_get_alarm_value(timer.group, timer.idx, &alarm_value);
 
+  return alarm_value;
+}
+*/
+hal_timer_t HAL_timer_get_compare(const uint8_t timer_num) {
+  const tTimerConfig& timer = timer_config[timer_num];
+  uint64_t alarm_value;
+  gptimer_get_raw_count(timer.timer, &alarm_value);
   return alarm_value;
 }
 
@@ -139,9 +205,16 @@ hal_timer_t HAL_timer_get_compare(const uint8_t timer_num) {
  * @return           the current counter of the alarm
  */
 hal_timer_t HAL_timer_get_count(const uint8_t timer_num) {
+  // Change: For 5.1.4
+  /*
   const tTimerConfig timer = timer_config[timer_num];
   uint64_t counter_value;
   timer_get_counter_value(timer.group, timer.idx, &counter_value);
+  return counter_value;
+  */
+  const tTimerConfig& timer = timer_config[timer_num];
+  uint64_t counter_value;
+  ESP_ERROR_CHECK(gptimer_get_raw_count(timer.timer, &counter_value));
   return counter_value;
 }
 
@@ -150,8 +223,16 @@ hal_timer_t HAL_timer_get_count(const uint8_t timer_num) {
  * @param timer_num timer number to enable interrupts on
  */
 void HAL_timer_enable_interrupt(const uint8_t timer_num) {
+  // Change: For 5.1.4
   //const tTimerConfig timer = timer_config[timer_num];
   //timer_enable_intr(timer.group, timer.idx);
+  timer_config[timer_num].interrupt_enabled = true;
+  if (timer_config[timer_num].timer != NULL) {
+    gptimer_event_callbacks_t callbacks = {
+      .on_alarm = timer_on_alarm_callback,
+    };
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, (void*)timer_num));
+  }
 }
 
 /**
@@ -159,13 +240,23 @@ void HAL_timer_enable_interrupt(const uint8_t timer_num) {
  * @param timer_num timer number to disable interrupts on
  */
 void HAL_timer_disable_interrupt(const uint8_t timer_num) {
+  // Change: For 5.1.4
   //const tTimerConfig timer = timer_config[timer_num];
   //timer_disable_intr(timer.group, timer.idx);
+  timer_config[timer_num].interrupt_enabled = false;
+  if (timer_config[timer_num].timer != NULL) {
+    gptimer_event_callbacks_t callbacks = {
+      .on_alarm = NULL,
+    };
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, NULL));
+  }
 }
 
 bool HAL_timer_interrupt_enabled(const uint8_t timer_num) {
-  const tTimerConfig timer = timer_config[timer_num];
-  return TG[timer.group]->int_ena.val | BIT(timer_num);
+  // Change: For 5.1.4
+  //const tTimerConfig timer = timer_config[timer_num];
+  //return TG[timer.group]->int_ena.val | BIT(timer_num);
+  return timer_config[timer_num].interrupt_enabled;
 }
 
 #endif // ARDUINO_ARCH_ESP32

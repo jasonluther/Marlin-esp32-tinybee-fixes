@@ -22,7 +22,8 @@
 #pragma once
 
 #include <stdint.h>
-#include <driver/timer.h>
+//#include <driver/timer.h> // Change: For 5.1.4
+#include <driver/gptimer.h> // Change: For 5.1.4
 
 // ------------------------
 // Defines
@@ -111,10 +112,13 @@ extern "C" {
 // ------------------------
 
 typedef struct {
-  timer_group_t  group;
-  timer_idx_t    idx;
+  //timer_group_t  group; //Change for 5.1.4
+  //timer_idx_t    idx;   //Change for 5.1.4
+  int timer_id; //Unique ID for the timer Change for 5.1.4
   uint32_t       divider;
   void           (*fn)();
+  gptimer_handle_t timer; //Timer Handle Change for 5.1.4
+  bool interrupt_enabled;   //Change for 5.1.4
 } tTimerConfig;
 
 // ------------------------
