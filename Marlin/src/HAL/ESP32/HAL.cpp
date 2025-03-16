@@ -25,7 +25,31 @@
 #include "./Hal.h"
 
 #include <rom/rtc.h>
-#include <esp_adc/adc_continuous.h> // Change: For 5.1.4
+// Change: For 5.1.4
+/*
+ * Note on ADC API selection (oneshot vs continuous):
+ *
+ * ESP-IDF 5.x provides two different ADC APIs:
+ * 
+ * 1. Oneshot ADC (esp_adc/adc_oneshot.h):
+ *    - Designed for occasional, on-demand readings
+ *    - Simple synchronous API with direct function calls
+ *    - Lower resource utilization (no DMA buffers or background tasks)
+ *    - Perfect for temperature monitoring where readings every ~100ms are sufficient
+ * 
+ * 2. Continuous ADC (esp_adc/adc_continuous.h):
+ *    - Designed for high-frequency sampling applications (audio, signal analysis)
+ *    - Uses DMA for continuous background sampling
+ *    - Requires callback handlers or event queues for data processing
+ *    - Higher resource utilization and more complex implementation
+ * 
+ * For 3D printer firmware like Marlin, the oneshot mode is ideal because:
+ *   - Temperature readings only need to happen periodically, not continuously
+ *   - Implementation is simpler and uses fewer resources
+ *   - Direct synchronous calls fit better with Marlin's architecture
+ *   - DMA and continuous sampling would be overkill for the application's needs
+ */
+#include <esp_adc/adc_oneshot.h>    // Change: For 5.1.4
 //#include <driver/adc.h>           // Change: For 5.1.4
 //#include <esp_adc_cal.h>          // Change: For 5.1.4
 #include <esp_adc/adc_cali.h>      // Change: For 5.1.4
@@ -74,20 +98,32 @@ portMUX_TYPE MarlinHAL::spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 #define V_REF 1100
 
+#ifndef ADC_REFERENCE_VOLTAGE
+  #define ADC_REFERENCE_VOLTAGE 3.3
+#endif
+
+// Change: For 5.1.4
+#define ADC_CHANNEL_MAX ((uint8_t)ADC_CHANNEL_9) + 1
+#define ADC_ATTEN_DB_MAX  ((uint8_t )ADC_ATTEN_DB_12) +1 
+
 // ------------------------
 // Public Variables
 // ------------------------
 
 uint16_t MarlinHAL::adc_result;
+adc_oneshot_unit_handle_t adc_handle = NULL;
 pwm_pin_t MarlinHAL::pwm_pin_data[MAX_EXPANDER_BITS];
 
 // ------------------------
 // Private Variables
 // ------------------------
-
-esp_adc_cal_characteristics_t characteristics[ADC_ATTENDB_MAX];
-adc_atten_t attenuations[ADC1_CHANNEL_MAX] = {};
-uint32_t thresholds[ADC_ATTENDB_MAX];
+// Change: For 5.1.4
+//esp_adc_cal_characteristics_t characteristics[ADC_ATTENDB_MAX];
+//adc_atten_t attenuations[ADC1_CHANNEL_MAX] = {};
+//uint32_t thresholds[ADC_ATTENDB_MAX];
+adc_cali_handle_t characteristics[ADC_ATTEN_DB_MAX];
+adc_atten_t attenuations[ADC_CHANNEL_MAX] = {};
+uint32_t thresholds[ADC_ATTEN_DB_MAX];
 
 volatile int numPWMUsed = 0;
 volatile struct { pin_t pin; int value; } pwmState[MAX_PWM_PINS];
@@ -232,35 +268,47 @@ int MarlinHAL::freeMemory() { return ESP.getFreeHeap(); }
 // ADC
 // ------------------------
 
-//Reference:
-//tools/sdk/esp32/include/driver/include/driver/adc.h
-adc1_channel_t get_channel(int pin)
+// Change: For 5.1.4
+adc_channel_t get_channel(int pin)
 {
     switch (pin) {
     case 39:
-        return ADC1_CHANNEL_3;
+        return ADC_CHANNEL_3;
     case 36:
-        return ADC1_CHANNEL_0;
+        return ADC_CHANNEL_0;
     case 35:
-        return ADC1_CHANNEL_7;
+        return ADC_CHANNEL_7;
     case 34:
-        return ADC1_CHANNEL_6;
+        return ADC_CHANNEL_6;
     case 33:
-        return ADC1_CHANNEL_5;
+        return ADC_CHANNEL_5;
     case 32:
-        return ADC1_CHANNEL_4;
+        return ADC_CHANNEL_4;
     }
-    return ADC1_CHANNEL_MAX;
+    return ADC_CHANNEL_9;
 }
 
-void adc1_set_attenuation(adc1_channel_t chan, adc_atten_t atten) {
+// Change: For 5.1.4
+//void adc1_set_attenuation(adc1_channel_t chan, adc_atten_t atten) {
+//  if (attenuations[chan] != atten) {
+//    adc1_config_channel_atten(chan, atten);
+//    attenuations[chan] = atten;
+//  }
+//}
+
+void adc_set_attenuation(adc_channel_t chan, adc_atten_t atten) {
   if (attenuations[chan] != atten) {
-    adc1_config_channel_atten(chan, atten);
+    adc_oneshot_chan_cfg_t config = {
+      .atten = atten,
+      .bitwidth = ADC_BITWIDTH_12,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, chan, &config));
     attenuations[chan] = atten;
   }
 }
 
-void MarlinHAL::adc_init() {
+// Change: For 5.1.4
+/*void MarlinHAL::adc_init() {
   // Configure ADC
   adc1_config_width(ADC_WIDTH_BIT_12);
 
@@ -290,12 +338,50 @@ void MarlinHAL::adc_init() {
     // Change attenuation 100mV below the calibrated threshold
     thresholds[i] = esp_adc_cal_raw_to_voltage(4095, &characteristics[i]);
   }
+}*/
+void MarlinHAL::adc_init() {
+  // Initialize ADC
+  adc_oneshot_unit_init_cfg_t init_config = {
+    .unit_id = ADC_UNIT_1,
+  };
+  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
+
+  // Configure channels only if used
+  TERN_(HAS_TEMP_ADC_0,        adc_set_attenuation(get_channel(TEMP_0_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_1,        adc_set_attenuation(get_channel(TEMP_1_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_2,        adc_set_attenuation(get_channel(TEMP_2_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_3,        adc_set_attenuation(get_channel(TEMP_3_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_4,        adc_set_attenuation(get_channel(TEMP_4_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_5,        adc_set_attenuation(get_channel(TEMP_5_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_6,        adc_set_attenuation(get_channel(TEMP_6_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_ADC_7,        adc_set_attenuation(get_channel(TEMP_7_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_HEATED_BED,        adc_set_attenuation(get_channel(TEMP_BED_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_CHAMBER,      adc_set_attenuation(get_channel(TEMP_CHAMBER_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_PROBE,        adc_set_attenuation(get_channel(TEMP_PROBE_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_COOLER,       adc_set_attenuation(get_channel(TEMP_COOLER_PIN), ADC_ATTEN_DB_12));
+  TERN_(HAS_TEMP_BOARD,        adc_set_attenuation(get_channel(TEMP_BOARD_PIN), ADC_ATTEN_DB_12));
+  TERN_(FILAMENT_WIDTH_SENSOR, adc_set_attenuation(get_channel(FILWIDTH_PIN), ADC_ATTEN_DB_12));
+  
+  // Initialize calibration
+  for (int i = 0; i < ADC_ATTENDB_MAX; i++) {
+    adc_cali_line_fitting_config_t cali_config = {
+      .unit_id = ADC_UNIT_1,
+      .atten = (adc_atten_t)i,
+      .bitwidth = ADC_BITWIDTH_12,
+    };
+    ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&cali_config, &characteristics[i]));
+    
+    // Calculer les seuils pour chaque niveau d'atténuation
+    int raw_value = 4095; // Valeur maximale pour 12 bits
+    int voltage_mv;
+    ESP_ERROR_CHECK(adc_cali_raw_to_voltage(characteristics[i], raw_value, &voltage_mv));
+    thresholds[i] = voltage_mv;
+  }
 }
 
-#ifndef ADC_REFERENCE_VOLTAGE
-  #define ADC_REFERENCE_VOLTAGE 3.3
-#endif
 
+// Change: For 5.1.4
+/*
 void MarlinHAL::adc_start(const pin_t pin) {
   const adc1_channel_t chan = get_channel(pin);
   uint32_t mv;
@@ -312,10 +398,35 @@ void MarlinHAL::adc_start(const pin_t pin) {
   else if (mv > thresholds[ADC_ATTEN_DB_2_5] - 50 && mv < thresholds[ADC_ATTEN_DB_6] - 100)
     atten = ADC_ATTEN_DB_6;
   else if (mv > thresholds[ADC_ATTEN_DB_6] - 50)
-    atten = ADC_ATTEN_DB_11;
+    atten = ADC_ATTEN_DB_12;
   else return;
 
   adc1_set_attenuation(chan, atten);
+}
+*/
+void MarlinHAL::adc_start(const pin_t pin) {
+  const adc_channel_t chan = get_channel(pin);
+  int raw_value;
+  ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, chan, &raw_value));
+  
+  int voltage_mv;
+  ESP_ERROR_CHECK(adc_cali_raw_to_voltage(characteristics[attenuations[chan]], raw_value, &voltage_mv));
+
+  adc_result = voltage_mv * isr_float_t(1023) / isr_float_t(ADC_REFERENCE_VOLTAGE) / isr_float_t(1000);
+
+  // Change the attenuation level based on the new reading
+  adc_atten_t atten;
+  if (voltage_mv < thresholds[ADC_ATTEN_DB_0] - 100)
+    atten = ADC_ATTEN_DB_0;
+  else if (voltage_mv > thresholds[ADC_ATTEN_DB_0] - 50 && voltage_mv < thresholds[ADC_ATTEN_DB_2_5] - 100)
+    atten = ADC_ATTEN_DB_2_5;
+  else if (voltage_mv > thresholds[ADC_ATTEN_DB_2_5] - 50 && voltage_mv < thresholds[ADC_ATTEN_DB_6] - 100)
+    atten = ADC_ATTEN_DB_6;
+  else if (voltage_mv > thresholds[ADC_ATTEN_DB_6] - 50)
+    atten = ADC_ATTEN_DB_12;
+  else return;
+
+  adc_set_attenuation(chan, atten);
 }
 
 // ------------------------
