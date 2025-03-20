@@ -125,7 +125,8 @@ typedef struct {
 // Public Variables
 // ------------------------
 
-extern const tTimerConfig timer_config[];
+//Change: For IDF 5.1.4
+extern tTimerConfig timer_config[];
 
 // ------------------------
 // Public functions

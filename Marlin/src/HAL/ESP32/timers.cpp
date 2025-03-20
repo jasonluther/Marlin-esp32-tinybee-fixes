@@ -41,8 +41,10 @@
 // ------------------------
 
 static timg_dev_t *TG[2] = {&TIMERG0, &TIMERG1};
+static uint8_t timer_ids[NUM_HARDWARE_TIMERS];
 
-const tTimerConfig timer_config[NUM_HARDWARE_TIMERS] = { //Change: For 5.1.4
+//Change: For IDF 5.1.4
+tTimerConfig timer_config[NUM_HARDWARE_TIMERS] = { //Change: For 5.1.4
   { 0, STEPPER_TIMER_PRESCALE, stepTC_Handler, NULL, false }, // 0 - Stepper
   { 1, TEMP_TIMER_PRESCALE, tempTC_Handler, NULL, false },    // 1 - Temperature
   { 2, PWM_TIMER_PRESCALE, pwmTC_Handler, NULL, false },      // 2 - PWM
@@ -80,7 +82,7 @@ void IRAM_ATTR timer_isr(void *para) {
 */
 
 bool IRAM_ATTR timer_on_alarm_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data) {
-  uint8_t timer_num = (uint8_t)(uint32_t)user_data;
+  uint8_t timer_num = *(uint8_t*)user_data;
   const tTimerConfig& timer_config_entry = timer_config[timer_num];
   // Call the timer callback
   timer_config_entry.fn();
@@ -138,7 +140,9 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
   gptimer_alarm_config_t alarm_config = {
     .alarm_count = alarm_value,
     .reload_count = 0,
-    .flags.auto_reload_on_alarm = true,
+    .flags = {
+      .auto_reload_on_alarm = 1
+    }
   };
   ESP_ERROR_CHECK(gptimer_set_alarm_action(timer_config[timer_num].timer, &alarm_config));
   
@@ -146,7 +150,8 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
   gptimer_event_callbacks_t callbacks = {
     .on_alarm = timer_on_alarm_callback,
   };
-  ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, (void*)timer_num));
+  timer_ids[timer_num] = timer_num;
+  ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, &timer_ids[timer_num]));
   
   // Start the timer
   ESP_ERROR_CHECK(gptimer_enable(timer_config[timer_num].timer));
@@ -169,9 +174,11 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
 void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
   const tTimerConfig& timer = timer_config[timer_num];
   gptimer_alarm_config_t alarm_config = {
-    .alarm_count = compare,
+    .alarm_count = compare ,
     .reload_count = 0,
-    .flags.auto_reload_on_alarm = true,
+    .flags = {
+      .auto_reload_on_alarm = 1
+    }
   };
   ESP_ERROR_CHECK(gptimer_set_alarm_action(timer.timer, &alarm_config));
 }
@@ -231,7 +238,8 @@ void HAL_timer_enable_interrupt(const uint8_t timer_num) {
     gptimer_event_callbacks_t callbacks = {
       .on_alarm = timer_on_alarm_callback,
     };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, (void*)timer_num));
+    timer_ids[timer_num] = timer_num;
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer_config[timer_num].timer, &callbacks, &timer_ids[timer_num]));
   }
 }
 

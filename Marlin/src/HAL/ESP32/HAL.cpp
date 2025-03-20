@@ -54,7 +54,7 @@
 //#include <esp_adc_cal.h>          // Change: For 5.1.4
 #include <esp_adc/adc_cali.h>      // Change: For 5.1.4
 #include <esp_adc/adc_cali_scheme.h> // Change: For 5.1.4
-
+#include <driver/ledc.h> // Change: For 5.1.4
 
 #include <HardwareSerial.h>
 
@@ -131,7 +131,7 @@ volatile struct { pin_t pin; int value; } pwmState[MAX_PWM_PINS];
 pin_t chan_pin[CHANNEL_MAX_NUM + 1] = { 0 }; // PWM capable IOpins - not 0 or >33 on ESP32
 
 struct {
-  uint32_t freq; // ledcReadFreq doesn't work if a duty hasn't been set yet!
+  uint32_t freq; 
   uint16_t res;
 } pwmInfo[(CHANNEL_MAX_NUM + 1) / 2];
 
@@ -439,6 +439,31 @@ int8_t channel_for_pin(const uint8_t pin) {
   return -1;
 }
 
+//Change: For IDF 5.1.4
+void ledcAttachPin(uint8_t pin, uint8_t channel) {
+  ledc_channel_config_t channel_config = {
+    .gpio_num = pin,
+    .speed_mode = LEDC_LOW_SPEED_MODE,
+    .channel = (ledc_channel_t)channel,
+    .timer_sel = (ledc_timer_t)(channel / 2),
+    .duty = 0,
+    .hpoint = 0
+  };
+  ESP_ERROR_CHECK(ledc_channel_config(&channel_config));
+}
+
+//Change: For IDF 5.1.4
+void ledcDetachPin(uint8_t pin) {
+  ESP_ERROR_CHECK(gpio_reset_pin((gpio_num_t)pin));
+}
+
+/*void ledcWrite(uint8_t channel, uint32_t duty) {
+  ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty));
+  ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, channel));
+}*/
+
+
+
 // get PWM channel for pin - if none then attach a new one
 // return -1 if fail or invalid pin#, channel # (0-15) if success
 int8_t get_pwm_channel(const pin_t pin, const uint32_t freq, const uint16_t res) {
@@ -465,7 +490,16 @@ int8_t get_pwm_channel(const pin_t pin, const uint32_t freq, const uint16_t res)
     chan_pin[cid] = pin;
     pwmInfo[cid / 2].freq = freq;
     pwmInfo[cid / 2].res = res;
-    ledcSetup(cid, freq, res);
+    // Change: For 5.1.4
+    //ledcSetup(cid, freq, res);
+    ledc_timer_config_t timer_config = {
+      .speed_mode = LEDC_LOW_SPEED_MODE,
+      .duty_resolution = (ledc_timer_bit_t)res,
+      .timer_num = (ledc_timer_t)(cid / 2),
+      .freq_hz = freq,
+      .clk_cfg = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&timer_config));
     ledcAttachPin(pin, cid);
   }
   return cid; // -1 if no channel avail
@@ -505,7 +539,7 @@ int8_t MarlinHAL::set_pwm_frequency(const pin_t pin, const uint32_t f_desired) {
 
   const int8_t cid = channel_for_pin(pin);
   if (cid >= 0) {
-    if (f_desired == ledcReadFreq(cid)) return cid; // no freq change
+    if (f_desired == ledc_get_freq(LEDC_LOW_SPEED_MODE, (ledc_timer_t)(cid / 2))) return cid; // no freq change
     ledcDetachPin(chan_pin[cid]);
     chan_pin[cid] = 0;              // remove old freq channel
   }
@@ -539,7 +573,7 @@ void analogWrite(const pin_t pin, const uint16_t value, const uint32_t freq/*=PW
     // Start timer on first use
     if (idx == 0) HAL_timer_start(MF_TIMER_PWM, PWM_TIMER_FREQUENCY);
 
-    ++numPWMUsed;
+    numPWMUsed = numPWMUsed + 1; //Change: For IDF 5.1.4
   }
 
   // Use 7bit internal value - add 1 to have 100% high at 255

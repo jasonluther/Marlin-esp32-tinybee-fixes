@@ -50,7 +50,7 @@ HAL_TONE_TIMER_ISR() {
   HAL_timer_isr_prologue(MF_TIMER_TONE);
 
   if (toggles) {
-    toggles--;
+    toggles = toggles - 1; //Change: For IDF 5.1.4
     TOGGLE(tone_pin);
   }
   else noTone(tone_pin);                         // turn off interrupt
