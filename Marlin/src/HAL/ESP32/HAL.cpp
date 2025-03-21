@@ -111,7 +111,7 @@ portMUX_TYPE MarlinHAL::spinlock = portMUX_INITIALIZER_UNLOCKED;
 // ------------------------
 
 uint16_t MarlinHAL::adc_result;
-adc_oneshot_unit_handle_t adc_handle = NULL;
+adc_oneshot_unit_handle_t one_shot_adc_handle = NULL;
 pwm_pin_t MarlinHAL::pwm_pin_data[MAX_EXPANDER_BITS];
 
 // ------------------------
@@ -302,7 +302,7 @@ void adc_set_attenuation(adc_channel_t chan, adc_atten_t atten) {
       .atten = atten,
       .bitwidth = ADC_BITWIDTH_12,
     };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, chan, &config));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(one_shot_adc_handle, chan, &config));
     attenuations[chan] = atten;
   }
 }
@@ -344,7 +344,7 @@ void MarlinHAL::adc_init() {
   adc_oneshot_unit_init_cfg_t init_config = {
     .unit_id = ADC_UNIT_1,
   };
-  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
+  ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &one_shot_adc_handle));
 
   // Configure channels only if used
   TERN_(HAS_TEMP_ADC_0,        adc_set_attenuation(get_channel(TEMP_0_PIN), ADC_ATTEN_DB_12));
@@ -407,7 +407,7 @@ void MarlinHAL::adc_start(const pin_t pin) {
 void MarlinHAL::adc_start(const pin_t pin) {
   const adc_channel_t chan = get_channel(pin);
   int raw_value;
-  ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, chan, &raw_value));
+  ESP_ERROR_CHECK(adc_oneshot_read(one_shot_adc_handle, chan, &raw_value));
   
   int voltage_mv;
   ESP_ERROR_CHECK(adc_cali_raw_to_voltage(characteristics[attenuations[chan]], raw_value, &voltage_mv));
