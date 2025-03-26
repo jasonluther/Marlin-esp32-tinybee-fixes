@@ -245,38 +245,37 @@ int MarlinHAL::freeMemory() { return ESP.getFreeHeap(); }
   void watchdogSetup() {
     // do whatever. don't remove this function.
   }
+
   void MarlinHAL::watchdog_init() {
+    
+    // Configure the watchdog with 8 seconds timeout
     esp_task_wdt_config_t wdt_config = {
       .timeout_ms = 8000,
-      .idle_core_mask = 3,
+      .idle_core_mask = 3,  // Watch both cores
       .trigger_panic = true,
     };
-    
-    // Check if watchdog is already initialized for the current task
+    // Check if the current task is already subscribed to the watchdog
     esp_err_t status = esp_task_wdt_status(NULL);
+     
+    if (status == ESP_OK) {
+      // Task is already subscribed to the watchdog
+      // No need to reinitialize or add the task
+      return;
+    }
+
+    if (status == ESP_ERR_NOT_FOUND){
+          // Current task is not subscribed to the watchdog
+          esp_task_wdt_add(NULL);
+          return;
+    }
     
-    if (status == ESP_ERR_NOT_FOUND) {
-      // There are two possibilities:
-      // 1. Watchdog is not initialized at all
-      // 2. Watchdog is initialized but current task is not registered
-      
-      // Try to reconfigure first (this will work if WDT exists but task is not registered)
-      esp_err_t reconfigure_err = esp_task_wdt_reconfigure(&wdt_config);
-      
-      if (reconfigure_err == ESP_ERR_INVALID_STATE) {
-        // WDT doesn't exist yet, so initialize it
-        ESP_ERROR_CHECK(esp_task_wdt_init(&wdt_config));
-      }
-      
-      // Now register the current task
-      ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
-    } else if (status == ESP_OK) {
-      // Watchdog is initialized and current task is already registered
-      // Just reconfigure the watchdog
-      ESP_ERROR_CHECK(esp_task_wdt_reconfigure(&wdt_config));
-    } else {
-      // Unexpected error
-      ESP_ERROR_CHECK(status); // This will print the error and potentially panic
+    // Try to initialize the watchdog
+    esp_err_t init_err = esp_task_wdt_init(&wdt_config);
+    
+    if (init_err == ESP_OK) {
+      // Watchdog now exists, but current task is not subscribed
+      // Just add the current task without reinitializing
+      esp_task_wdt_add(NULL);
     }
   }
 
