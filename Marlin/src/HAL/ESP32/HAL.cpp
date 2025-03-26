@@ -58,7 +58,7 @@
 
 #include <HardwareSerial.h>
 
-#if ENABLED(USE_ESP32_TASK_WDT)
+#if ENABLED(USE_WATCHDOG)
   #include <esp_task_wdt.h>
 #endif
 
@@ -179,9 +179,6 @@ bool isSdUsed()
 #endif
 
 void MarlinHAL::init_board() {
-  #if ENABLED(USE_ESP32_TASK_WDT)
-    esp_task_wdt_init(10, true);
-  #endif
   #if ENABLED(ESP3D_WIFISUPPORT)
     esp3dlib.init();
   #elif ENABLED(WIFISUPPORT)
@@ -245,22 +242,46 @@ int MarlinHAL::freeMemory() { return ESP.getFreeHeap(); }
 
 #if ENABLED(USE_WATCHDOG)
 
-  #define WDT_TIMEOUT_US TERN(WATCHDOG_DURATION_8S, 8000000, 4000000) // 4 or 8 second timeout
-
-  extern "C" {
-    esp_err_t esp_task_wdt_reset();
-  }
-
   void watchdogSetup() {
     // do whatever. don't remove this function.
   }
-
   void MarlinHAL::watchdog_init() {
-    // TODO
+    esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = 8000,
+      .idle_core_mask = 3,
+      .trigger_panic = true,
+    };
+    
+    // Check if watchdog is already initialized for the current task
+    esp_err_t status = esp_task_wdt_status(NULL);
+    
+    if (status == ESP_ERR_NOT_FOUND) {
+      // There are two possibilities:
+      // 1. Watchdog is not initialized at all
+      // 2. Watchdog is initialized but current task is not registered
+      
+      // Try to reconfigure first (this will work if WDT exists but task is not registered)
+      esp_err_t reconfigure_err = esp_task_wdt_reconfigure(&wdt_config);
+      
+      if (reconfigure_err == ESP_ERR_INVALID_STATE) {
+        // WDT doesn't exist yet, so initialize it
+        ESP_ERROR_CHECK(esp_task_wdt_init(&wdt_config));
+      }
+      
+      // Now register the current task
+      ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    } else if (status == ESP_OK) {
+      // Watchdog is initialized and current task is already registered
+      // Just reconfigure the watchdog
+      ESP_ERROR_CHECK(esp_task_wdt_reconfigure(&wdt_config));
+    } else {
+      // Unexpected error
+      ESP_ERROR_CHECK(status); // This will print the error and potentially panic
+    }
   }
 
   // Reset watchdog.
-  void MarlinHAL::watchdog_refresh() { esp_task_wdt_reset(); }
+  void MarlinHAL::watchdog_refresh() { esp_task_wdt_reset();}
 
 #endif
 
