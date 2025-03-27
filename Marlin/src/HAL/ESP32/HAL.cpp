@@ -280,7 +280,12 @@ int MarlinHAL::freeMemory() { return ESP.getFreeHeap(); }
   }
 
   // Reset watchdog.
-  void MarlinHAL::watchdog_refresh() { esp_task_wdt_reset();}
+  void MarlinHAL::watchdog_refresh() {
+    if (esp_task_wdt_status(NULL) == ESP_OK) {
+      esp_task_wdt_reset();
+    }
+    // Do nothing if the watchdog is not active or the current task is not subscribed
+  }
 
 #endif
 
