@@ -65,10 +65,9 @@ Change log
 * pins_MKS_TINYBEE.h
 Add `#define OLD_ADAPTIVE_MULTISTEPPING` - Fix dead loop with timer
 
+* add Caps in M115: WIFI=1
 
 To control :
-
-
 
 * FYSETC_E4.h
  `#define SKIP_TMC_SERIAL_BEGIN` 
@@ -80,4 +79,3 @@ To control :
     SETUP_RUN(tmc_serial_begin());
   #endif
 
-* add Caps : WIFI=1
