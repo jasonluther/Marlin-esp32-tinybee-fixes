@@ -41,7 +41,7 @@ int8_t Servo::attach(const int inPin) {
 
 // leave channel connected to servo - set duty to zero
 void Servo::detach() {
-  if (channel >= 0) ledcWrite(channel, 0);
+  if (channel >= 0) marlin_ledc_write_channel(channel, 0);
 }
 
 int Servo::read() { return degrees; }
@@ -50,7 +50,7 @@ void Servo::write(int inDegrees) {
   degrees = constrain(inDegrees, MIN_ANGLE, MAX_ANGLE);
   int us = map(degrees, MIN_ANGLE, MAX_ANGLE, MIN_PULSE_WIDTH, MAX_PULSE_WIDTH);
   int duty = map(us, 0, TAU_USEC, 0, MAX_COMPARE);
-  if (channel >= 0) ledcWrite(channel, duty); // don't save duty for servos!
+  if (channel >= 0) marlin_ledc_write_channel(channel, duty); // don't save duty for servos!
 }
 
 void Servo::move(const int value) {

@@ -426,10 +426,15 @@ void ledcDetachPin(uint8_t pin) {
   ESP_ERROR_CHECK(gpio_reset_pin((gpio_num_t)pin));
 }
 
-/*void ledcWrite(uint8_t channel, uint32_t duty) {
-  ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, channel, duty));
-  ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, channel));
-}*/
+// Change: For IDF 5.1.4
+// Arduino-ESP32 3.x ledcWrite() takes a pin, but this HAL manages LEDC channels
+// directly (ledcAttachPin / get_pwm_channel bind a pin to a channel id), so set
+// the duty by channel id. A plain ledcWrite definition would collide with the
+// core's pin-based symbol, hence the distinct name.
+void marlin_ledc_write_channel(uint8_t channel, uint32_t duty) {
+  ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel, duty));
+  ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)channel));
+}
 
 
 
@@ -493,7 +498,7 @@ void MarlinHAL::set_pwm_duty(const pin_t pin, const uint16_t v, const uint16_t v
   const int8_t cid = get_pwm_channel(pin, PWM_FREQUENCY, PWM_RESOLUTION);
   if (cid >= 0) {
     const uint32_t duty = map(invert ? v_size - v : v, 0, v_size, 0, _BV(PWM_RESOLUTION)-1);
-    ledcWrite(cid, duty);
+    marlin_ledc_write_channel(cid, duty);
   }
 }
 
@@ -519,7 +524,7 @@ void analogWrite(const pin_t pin, const uint16_t value, const uint32_t freq/*=PW
   // Use ledc hardware for internal pins
   const int8_t cid = get_pwm_channel(pin, freq, res);
   if (cid >= 0) {
-    ledcWrite(cid, value); // set duty value
+    marlin_ledc_write_channel(cid, value); // set duty value
     return;
   }
 
