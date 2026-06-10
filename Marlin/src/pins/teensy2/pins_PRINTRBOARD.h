@@ -75,6 +75,11 @@
 #define DISABLE_JTAG
 
 //
+// Servos
+//
+#define SERVO0_PIN                             3  // D3 EXP1 Pin 7
+
+//
 // Limit Switches
 //
 #define X_STOP_PIN                            47  // E3
