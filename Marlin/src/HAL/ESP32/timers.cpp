@@ -115,6 +115,8 @@ void HAL_timer_start(const uint8_t timer_num, const uint32_t frequency) {
 // Change: For 5.1.4
 void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
   const tTimerConfig& timer = timer_config[timer_num];
+  // See HAL_timer_get_count: handle is NULL until HAL_timer_start() runs (MarlinFirmware/Marlin#27451).
+  if (timer.timer == NULL) return;
   gptimer_alarm_config_t alarm_config = {
     .alarm_count = compare ,
     .reload_count = 0,
@@ -133,6 +135,8 @@ void HAL_timer_set_compare(const uint8_t timer_num, const hal_timer_t compare) {
 // Change: For 5.1.4
 hal_timer_t HAL_timer_get_compare(const uint8_t timer_num) {
   const tTimerConfig& timer = timer_config[timer_num];
+  // See HAL_timer_get_count: handle is NULL until HAL_timer_start() runs (MarlinFirmware/Marlin#27451).
+  if (timer.timer == NULL) return 0;
   uint64_t alarm_value;
   gptimer_get_raw_count(timer.timer, &alarm_value);
   return alarm_value;
@@ -146,6 +150,12 @@ hal_timer_t HAL_timer_get_compare(const uint8_t timer_num) {
 hal_timer_t HAL_timer_get_count(const uint8_t timer_num) {
   // Change: For 5.1.4
   const tTimerConfig& timer = timer_config[timer_num];
+  // With I2S_STEPPER_STREAM the step timer is never started, so the gptimer
+  // handle stays NULL, but block_phase_isr() still reads it unconditionally.
+  // IDF5's gptimer driver rejects a NULL handle ("invalid argument") and the
+  // per-ISR error flood trips the task watchdog. Return 0 for an uninitialized
+  // timer instead. (MarlinFirmware/Marlin#27451)
+  if (timer.timer == NULL) return 0;
   uint64_t counter_value;
   ESP_ERROR_CHECK(gptimer_get_raw_count(timer.timer, &counter_value));
   return counter_value;
