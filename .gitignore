@@ -170,3 +170,8 @@ __pycache__
 
 # IOLogger logs
 *_log.csv
+
+# Secrets: never commit local environment files
+.env
+.env.*
+!.env.example
